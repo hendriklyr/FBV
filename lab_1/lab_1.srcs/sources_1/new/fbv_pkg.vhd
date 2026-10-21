@@ -44,6 +44,7 @@ package fbv_pkg is
 end fbv_pkg;
 
 package body fbv_pkg is
+
     procedure dig_offset(
         signal i_data          : in  std_logic_vector;
         signal i_offset        : in std_logic_vector;
@@ -70,10 +71,14 @@ package body fbv_pkg is
     
     function dig_gain(
         i_data, factor      :std_logic_vector;
-        decimals, res_width :integer     --integer ?? generic?? better with logic_vector??
+        decimals, res_width :positive     --integer ?? generic?? better with logic_vector?? just look in the text its positive
     )return std_logic_vector is
+    --variable result : unsigned((i_data'length + factor'length) -1 downto 0);
+    variable result : unsigned((res_width -1) downto 0);
     begin
-    
+        result := unsigned(i_data) * unsigned(factor);
+         
+        return  std_logic_vector(result(result'left downto decimals)); -- TODO check if changing at decimals is nessesary
     end function dig_gain;
     
 end package body fbv_pkg;

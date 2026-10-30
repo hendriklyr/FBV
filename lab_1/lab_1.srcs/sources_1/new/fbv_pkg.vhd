@@ -2,9 +2,9 @@
 -- Company: 
 -- Engineer: 
 -- 
--- Create Date: 10/20/2026 09:20:33 PM
+-- Create Date: 10/26/2026 11:06:49 AM
 -- Design Name: 
--- Module Name: fbv_pkg - 
+-- Module Name: fbv_pkg - Behavioral
 -- Project Name: 
 -- Target Devices: 
 -- Tool Versions: 
@@ -24,7 +24,7 @@ use IEEE.STD_LOGIC_1164.ALL;
 
 -- Uncomment the following library declaration if using
 -- arithmetic functions with Signed or Unsigned values
---use IEEE.NUMERIC_STD.ALL;
+use IEEE.NUMERIC_STD.ALL;
 
 -- Uncomment the following library declaration if instantiating
 -- any Xilinx leaf cells in this code.
@@ -32,53 +32,49 @@ use IEEE.STD_LOGIC_1164.ALL;
 --use UNISIM.VComponents.all;
 
 package fbv_pkg is
-    procedure dig_offset(
-        signal i_data          : in  std_logic_vector;
-        signal i_offset        : in std_logic_vector;
-        signal o_result        : out std_logic_vector
-    );
-    function dig_gain(
-        i_data, factor      :std_logic_vector;
-        decimals, res_width :integer     --integer ?? generic?? better with logic_vector??
-    )return std_logic_vector;
+--  Port ( );
+    procedure DIG_OFFSET(signal iData : in std_logic_vector;
+                         signal Offset : in std_logic_vector;
+                         signal Result : out std_logic_vector);
+    function DIG_GAIN( iData, Factor : std_logic_vector; Decimals, res_width: positive) return std_logic_vector;
 end fbv_pkg;
 
 package body fbv_pkg is
 
-    procedure dig_offset(
-        signal i_data          : in  std_logic_vector;
-        signal i_offset        : in std_logic_vector;
-        signal o_result        : out std_logic_vector
-    ) is
-    signal add, add_temp : unsigned (i_data'length downto 0);-- 1 bit more then i_data
-    signal data_signed : std_logic_vector(i_data'length downto 0); -- 1 bit more then i_data
-    signal sub : signed (i_data'length -1 downto 0);
+    -- Offset hinzufügen(kann negativ sein)
+    procedure DIG_OFFSET(signal iData : in std_logic_vector;
+                         signal Offset : in std_logic_vector;
+                         signal Result : out std_logic_vector) is  
+    variable sum: signed(iData'length +1 downto 0);  
     begin
-    --plan: offset is signed -> convert to signed first? or just check the msb first?
-    --      then: data to unsigend check if extra 0 is needed
-    if i_offset(i_offset'left) = '0' then 
-        add <= UNSIGNED(i_data) + UNSIGNED(i_offset);
-        add_temp <= add; -- to get the same delay as with negativ offset
-        o_result <= std_logic_vector(add_temp);
-    else
-        data_signed <= '0' & i_data;
-        sub <= SIGNED(data_signed) - SIGNED(i_offset);
-        o_result <= std_logic_vector(sub(sub'left -1 downto 0));
+        sum := signed("00" & iData) + signed(Offset);
+        if (sum(sum'left) = '1') then
+            Result <= (others => '0');
+        elsif (Result'length = iData'length and sum(sum'left -1) = '1') then
+            Result <= (others => '1');
+        else
+            Result <= std_logic_vector(sum(sum'left-2 downto 0));
+        end if;
+    end procedure;
+    
+    
+    -- Gain berechnen
+    function DIG_GAIN( iData, Factor : std_logic_vector; Decimals, res_width: positive) return std_logic_vector is
+        variable product: unsigned(iData'length+Factor'length-1 downto 0);
+        variable no_dec: unsigned(iData'length+Factor'length-1 downto 0);
+        variable res_val: std_logic_vector(res_width-1 downto 0);
+    begin
+        product := unsigned(iData) * unsigned(Factor);
+        no_dec := shift_right(product, Decimals);
         
-    end if;
-    
-    end procedure dig_offset;
-    
-    function dig_gain(
-        i_data, factor      :std_logic_vector;
-        decimals, res_width :positive     --integer ?? generic?? better with logic_vector?? just look in the text its positive
-    )return std_logic_vector is
-    --variable result : unsigned((i_data'length + factor'length) -1 downto 0);
-    variable result : unsigned((res_width -1) downto 0);
-    begin
-        result := unsigned(i_data) * unsigned(factor);
-         
-        return  std_logic_vector(result(result'left downto decimals)); -- TODO check if changing at decimals is nessesary
-    end function dig_gain;
-    
-end package body fbv_pkg;
+        if (no_dec(no_dec'left downto res_width) /= 0) then
+            res_val := (others => '1');
+        else
+            res_val := std_logic_vector(no_dec(res_width-1 downto 0));
+        end if; 
+        
+        return res_val;
+    end function;
+
+
+end fbv_pkg;

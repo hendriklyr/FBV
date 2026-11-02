@@ -54,6 +54,8 @@ signal ff_add : std_logic_vector(7 downto 0);-- TODO: set length of ff_add and f
 signal ff_mul : std_logic_vector(7 downto 0);
 signal lval_delay: std_logic;
 signal fval_delay: std_logic;
+signal lval_delay2: std_logic;
+signal fval_delay2: std_logic;
 begin
 
     w_clk <=  i_clk;
@@ -82,9 +84,12 @@ begin
     begin
         if rising_edge(w_clk) then --TODO implement o_fval and i_fval
             o_video <= ff_mul; --TODO correct snipping/ if implemented in dig_gain then no need
-            lval_delay <= w_lval;
+            lval_delay2 <= w_lval;
+            lval_delay <= lval_delay2;
             o_lval <= lval_delay;
-            fval_delay <= w_fval;
+            
+            fval_delay2 <= w_fval;
+            fval_delay <= fval_delay2;
             o_fval <= fval_delay;
             
         end if;

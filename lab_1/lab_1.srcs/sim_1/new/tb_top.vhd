@@ -24,6 +24,7 @@ use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.numeric_std.all;
 
 use STD.textio.all;
+use std.env.finish;
 
 -- Uncomment the following library declaration if using
 -- arithmetic functions with Signed or Unsigned values
@@ -35,6 +36,10 @@ use STD.textio.all;
 --use UNISIM.VComponents.all;
 
 entity tb_top is
+    generic(
+        G_OFFSET : integer := -30;
+        G_GAIN : integer := 16
+    );
 --  Port ( );
 end tb_top;
 
@@ -51,6 +56,7 @@ component top
            o_video : out STD_LOGIC_VECTOR(7 downto 0);
            o_fval : out STD_LOGIC;
            o_lval : out STD_LOGIC);
+           
 end component;
            
            
@@ -96,17 +102,14 @@ begin
     wait for 5 ns;
 end process;
 
-tb_dig_gain <= "00000110";
-tb_dig_offset <= "00010100";
+tb_dig_gain <= std_logic_vector(TO_UNSIGNED(G_GAIN, 8));
+tb_dig_offset <= std_logic_vector(TO_SIGNED(G_OFFSET, 8));
 
-SYNC : process(tb_clk)
-begin
+tb_i_fval  <= tb_i_fval_intern;
+tb_i_lval <= tb_i_lval_intern;
 
-    --tb_i_video <= tb_i_video;
-    
-    tb_i_fval  <= tb_i_fval_intern;
-    tb_i_lval <= tb_i_lval_intern;
-end process;
+
+
 
 P_INPUT_FILE : process
     file input_file : TEXT open read_mode is "C:\Users\lagah\Documents\Studium\Semester_6\lena_sw.txt" ; -- maybe another ..\ needed
@@ -116,9 +119,10 @@ P_INPUT_FILE : process
     
     variable is_first_line : boolean := true;
 begin
- 
+    report(boolean'image(endfile(input_file))); 
     while not (endfile(input_file)) loop
-        tb_i_fval_intern <= '1';
+        
+        
         readline(input_file, inline);
         if is_first_line then 
             read(inline, width);
@@ -129,27 +133,26 @@ begin
             report ("Picture DATA: "& integer'image(bit_width));
             is_first_line := false;
         else 
+            
             for x in 1 to width loop
-                
                 wait until rising_edge(tb_clk);
+                tb_i_fval_intern <= '1';
                 tb_i_lval_intern <= '1';
                 read(inline, value);
-                
-                tb_i_video <= std_logic_vector(TO_UNSIGNED(value,8)); 
-                             
+                tb_i_video <= std_logic_vector(TO_UNSIGNED(value,8));
             end loop;
             tb_i_lval_intern <= '0';
+            if endfile(input_file) then 
+                tb_i_fval_intern <= '0';
+                exit;
+            end if;
             wait for 200 ns;
         end if;
     end loop;
-    tb_i_fval_intern <= '0';
     
-        
-    --    while (endfile(input_file)) loop
-    --        readline(input_file, inline);
-    --        read(inline, value);
-    --        tb_i_video <= std_logic_vector(value);
-    --    end loop;
+    
+    report("end of imput file");
+    wait;    
     
     
 end process;
@@ -175,17 +178,17 @@ begin
         wait until rising_edge(tb_clk);
         
         if tb_o_lval = '1' then
-            report("o_lval = 1");
+            --report("o_lval = 1");
             write(buf, TO_INTEGER(unsigned(tb_o_video)));
             write(buf, string'(" "));
         elsif tb_o_lval_ff = '1' and tb_o_lval = '0' then
-            report("o_lval = 0");
+            --report("o_lval = 0");
             writeline(output_file, buf);
         end if;
         
         tb_o_lval_ff := tb_o_lval;
           
     end loop;
-    wait;  
+    report("end of simulation can stop it now");  
 end process;
 end Behavioral;

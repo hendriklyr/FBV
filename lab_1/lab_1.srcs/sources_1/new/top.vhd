@@ -65,13 +65,6 @@ begin
     
     w_fval <= i_fval;
     w_lval <= i_lval;
-    P_SYNC: process(i_clk) 
-    begin  
-        if rising_edge(i_clk) then 
-            
-            
-        end if;
-    end process;
     P_LOGIC: process(w_clk) 
     begin
         if rising_edge(w_clk) then

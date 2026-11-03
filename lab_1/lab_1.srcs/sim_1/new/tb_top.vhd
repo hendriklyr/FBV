@@ -73,7 +73,7 @@ signal tb_dig_offset :  STD_LOGIC_VECTOR (7 downto 0);
 signal tb_i_fval :  STD_LOGIC;
 signal tb_i_lval : STD_LOGIC;
 signal tb_i_fval_intern :  STD_LOGIC;
-signal tb_i_lval_intern : STD_LOGIC;
+signal tb_i_lval_intern : STD_LOGIC ;
 signal tb_o_video :STD_LOGIC_VECTOR(7 downto 0);
 signal tb_o_fval : STD_LOGIC;
 signal tb_o_lval : STD_LOGIC;

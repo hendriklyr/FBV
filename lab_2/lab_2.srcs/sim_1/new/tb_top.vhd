@@ -36,17 +36,27 @@ end tb_top;
 
 architecture Behavioral of tb_top is
 
-signal tb_clk : in std_logic;
+
 
 component top 
     Port (
-        i_clk : in std_logic
+        dclk_n      : in    std_logic;
+        dclk_p      : in    std_logic;
+        i_DATA_n    : in    std_logic;
+        i_DATA_p    : in    std_logic;
+        resync      : in    std_logic;
+        rst         : in    std_logic;
+        sysclk      : in    std_logic;
+        o_data      : out   std_logic_vector(7 downto 0);
+        o_done      : out   std_logic;
+        o_err       : out   std_logic;
+        o_locked    : out   std_logic
     );
 end component;
 
 begin
      uut : top Port Map (
-        i_clk => tb_clk
+         
      );
      
      

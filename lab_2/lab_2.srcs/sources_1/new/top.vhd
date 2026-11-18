@@ -75,9 +75,14 @@ architecture Behavioral of top is
 --  Specifies group name for associated IDELAYs/ODELAYs and IDELAYCTRL
 
 attribute IODELAY_GROUP : STRING;
-attribute IODELAY_GROUP of <label_name>: label is "<iodelay_group_name>";
+attribute IODELAY_GROUP of IDELAYE2_inst, IDELAYCTRL_inst: label is "coolers_lable";
+
 signal idelayctrl_ready,idelayctrl_rst , pll_locked : std_logic;
 signal sysclk_bufg, clk200_bufg : std_logic;
+
+signal dclk_int, not_dclk_int : std_logic;
+signal dclk_bufio : std_logic;
+signal dclk_pixel : std_logic;
 
 signal data_int : std_logic; 
 signal data_delayed : std_logic;  
@@ -85,23 +90,46 @@ signal idelay_rdy : std_logic;
 
 --Signale fuer IDELAY2 
 signal idelay_ld : std_logic := '0'; 
-signal idelay_ce : std_logic := '0'; 
-signal idelay_inc : std_logic := '0'; 
+signal idelay_ce : std_logic := '0'; -- enable increment/decrement
+signal idelay_inc : std_logic := '0';  -- 0 is decrement 1 is inc
 signal idelay_cntin : std_logic_vector(4 downto 0) := (others => '0'); 
 signal idelay_cntout : std_logic_vector(4 downto 0);
 
 signal bitslip_sig : std_logic := '0';
 
+-- SIGNALE fuer FSM MAIN
+signal is_first_stable, is_first_not_stable : STD_LOGIC := '1';
+signal sc_stable , sc_done, sc_done_temp :std_logic := '0';
+signal tab_counter, current_tab_length,left_tab_length, current_start_tab, left_start_tab, current_end_tab, left_end_tab : unsigned( 4 downto 0);
+signal mid_calc : unsigned(tab_counter'length downto 0); -- 1 bit laenger fuer addition
+signal mid : unsigned (tab_counter'left downto 0);
+-- SIGNALE fuer FSM STABLE CHECK
 
-type MAIN_STATE_TYPE is (IDLE ,START_STABLE_CHECK, WAIT_STABLE_CHECK, START_WORD_ALLIGN, WAIT_WORD_ALLIGN);
+signal start_sc : std_logic := '0';
+signal prev_data, w_data : std_logic_vector(7 downto 0);
+signal sc_counter : unsigned( 2 downto 0);
+
+
+type MAIN_STATE_TYPE is (IDLE ,START_STABLE_CHECK, WAIT_STABLE_CHECK, FIRST_STABLE, FIRST_NOT_STABLE, REACHED_32, MID_FINDER, STABLE_OR_NOT, INCREMENT);
 
 signal MAIN_STATE, MAIN_NEXT_STATE : MAIN_STATE_TYPE;
 
-type STABLE_STATE_TYPE is (IDLE );
+type STABLE_STATE_TYPE is (IDLE, COMPARE_STATE );
 signal STABLE_STATE, STABLE_NEXT_STATE : STABLE_STATE_TYPE;
 
 type WORD_STATE_TYPE is ( IDLE);
 signal WORD_STATE, WORD_NEXT_STATE : WORD_STATE_TYPE;
+
+component clk_wiz_0 is
+    port (
+        clk_in1   : in std_logic;
+        clk_out1 : out std_logic;
+        clk_out2 : out std_logic;
+        locked : out std_logic;
+        reset : in std_logic
+        
+    );
+end component;
 begin
 
     
@@ -114,6 +142,40 @@ begin
         locked => pll_locked, -- Locked-Signal 
         reset => rst 
     );
+    
+    --Aufgabe 1ii
+
+   IBUFDS_inst : IBUFDS
+   generic map (
+      DIFF_TERM => FALSE, -- Differential Termination 
+      IBUF_LOW_PWR => TRUE, -- Low power (TRUE) vs. performance (FALSE) setting for referenced I/O standards
+      IOSTANDARD => "DEFAULT")
+   port map (
+      O => dclk_int,  -- Buffer output
+      I => dclk_p,  -- Diff_p buffer input (connect directly to top-level port)
+      IB => dclk_n -- Diff_n buffer input (connect directly to top-level port)
+   );
+    
+   BUFIO_inst : BUFIO
+   port map (
+      O => dclk_bufio, -- 1-bit output: Clock output (connect to I/O clock loads).
+      I => dclk_int  -- 1-bit input: Clock input (connect to an IBUF or BUFMR).
+   );
+   not_dclk_int <= (not dclk_int);
+   
+   BUFR_inst : BUFR
+   generic map (
+      BUFR_DIVIDE => "4",   -- Values: "BYPASS, 1, 2, 3, 4, 5, 6, 7, 8" 
+      SIM_DEVICE => "7SERIES"  -- Must be set to "7SERIES" 
+   )
+   port map (
+      O => dclk_pixel,     -- 1-bit output: Clock output port
+      CE => '1',   -- 1-bit input: Active high, clock enable (Divided modes only)
+      CLR => '0', -- 1-bit input: Active high, asynchronous clear (Divided modes only)
+      I => dclk_int     -- 1-bit input: Clock buffer input driven by an IBUF, MMCM or local interconnect
+   );
+
+
         
     --bufg_inst : BUFG
     --port map (
@@ -137,7 +199,7 @@ begin
       CINVCTRL_SEL => "FALSE",          -- Enable dynamic clock inversion (FALSE, TRUE)
       DELAY_SRC => "IDATAIN",           -- Delay input (IDATAIN, DATAIN)
       HIGH_PERFORMANCE_MODE => "FALSE", -- Reduced jitter ("TRUE"), Reduced power ("FALSE")
-      IDELAY_TYPE => "FIXED",           -- FIXED, VARIABLE, VAR_LOAD, VAR_LOAD_PIPE
+      IDELAY_TYPE => "VAR_LOAD",           -- FIXED, VARIABLE, VAR_LOAD, VAR_LOAD_PIPE
       IDELAY_VALUE => 0,                -- Input delay tap setting (0-31)
       PIPE_SEL => "FALSE",              -- Select pipelined mode, FALSE, TRUE
       REFCLK_FREQUENCY => 200.0,        -- IDELAYCTRL clock input frequency in MHz (190.0-210.0, 290.0-310.0).
@@ -147,7 +209,7 @@ begin
       CNTVALUEOUT => idelay_cntout,         -- 5-bit output: Counter value output
       DATAOUT => data_delayed,              -- 1-bit output: Delayed data output
       C => sysclk_bufg,                     -- 1-bit input: Clock input
-      CE => idelay_ce,                      -- 1-bit input: Active high enable increment/decrement input
+      CE => idelay_ce,                      -- 1-bit input: Active high enable increment/decrement input --vllt auch dauerhaft auf 
       CINVCTRL => '0',                      -- 1-bit input: Dynamic clock inversion input
       CNTVALUEIN => idelay_cntin,           -- 5-bit input: Counter value input
       DATAIN => '0',                        -- 1-bit input: Internal delay data input
@@ -155,9 +217,16 @@ begin
       INC => idelay_inc,                    -- 1-bit input: Increment / Decrement tap delay input
       LD => idelay_ld,                      -- 1-bit input: Load IDELAY_VALUE input
       LDPIPEEN => '0',                      -- 1-bit input: Enable PIPELINE register to load data input
-      REGRST => '0                          -- 1-bit input: Active-high reset tap-delay input
+      REGRST => '0'                          -- 1-bit input: Active-high reset tap-delay input
    );
    -- ###muss idelay signale noch sync gemacht werden?###
+    P_SYNC_IDELAY2_SIGNALS : process(sysclk_bufg)
+    begin
+        if rising_edge(sysclk_bufg) then 
+            
+        end if;
+    end process;
+    
    
    -- Aufgabe 3
    
@@ -188,19 +257,19 @@ begin
       SRVAL_Q4 => '0'
    )
    port map (
-    --  O => O,                       -- 1-bit output: Combinatorial output
+      O => open,                       -- 1-bit output: Combinatorial output
       -- Q1 - Q8: 1-bit (each) output: Registered data outputs
-      Q1 => o_data(7),
-      Q2 => o_data(6),
-      Q3 => o_data(5),
-      Q4 => o_data(4),
-      Q5 => o_data(3),
-      Q6 => o_data(2),
-      Q7 => o_data(1),
-      Q8 => o_data(0),
+      Q1 => w_data(7),
+      Q2 => w_data(6),
+      Q3 => w_data(5),
+      Q4 => w_data(4),
+      Q5 => w_data(3),
+      Q6 => w_data(2),
+      Q7 => w_data(1),
+      Q8 => w_data(0),
       -- SHIFTOUT1, SHIFTOUT2: 1-bit (each) output: Data width expansion output ports
-      --SHIFTOUT1 => SHIFTOUT1,
-      --=SHIFTOUT2 => SHIFTOUT2,
+      SHIFTOUT1 => open,
+      SHIFTOUT2 => open,
       BITSLIP => bitslip_sig,           -- 1-bit input: The BITSLIP pin performs a Bitslip operation synchronous to
                                     -- CLKDIV when asserted (active High). Subsequently, the data seen on the
                                     -- Q1 to Q8 output ports will shift, as in a barrel-shifter operation, one
@@ -210,44 +279,151 @@ begin
       -- CE1, CE2: 1-bit (each) input: Data register clock enable inputs
       CE1 => '1',
       CE2 => '1',
-      --CLKDIVP => CLKDIVP,           -- 1-bit input: TBD -- Clocks: 1-bit (each) input: ISERDESE2 clock input ports
-      CLK => dclk_p,                   -- 1-bit input: High-speed clock -- ###muss dclk noch mit ibugio syncroniesiert wertden??### TODO: aufgabe 1)ii 
-      CLKB => dclk_n,                 -- 1-bit input: High-speed secondary clock
-      CLKDIV => CLKDIV,     --muss noch gemacht werden        -- 1-bit input: Divided clock
-      --OCLK => OCLK,                 -- 1-bit input: High speed output clock used when INTERFACE_TYPE="MEMORY" 
+      CLKDIVP => '0',           -- 1-bit input: TBD -- Clocks: 1-bit (each) input: ISERDESE2 clock input ports
+      CLK => dclk_int,                   -- 1-bit input: High-speed clock -- ###muss dclk noch mit ibugio syncroniesiert wertden??### TODO: aufgabe 1)ii 
+      CLKB => not_dclk_int,                 -- 1-bit input: High-speed secondary clock
+      CLKDIV => dclk_pixel,--muss noch gemacht werden        -- 1-bit input: Divided clock
+      OCLK => '0',                 -- 1-bit input: High speed output clock used when INTERFACE_TYPE="MEMORY" 
       -- Dynamic Clock Inversions: 1-bit (each) input: Dynamic clock inversion pins to switch clock polarity
-   --   DYNCLKDIVSEL => DYNCLKDIVSEL, -- 1-bit input: Dynamic CLKDIV inversion
-   --   DYNCLKSEL => DYNCLKSEL,       -- 1-bit input: Dynamic CLK/CLKB inversion
+      DYNCLKDIVSEL => '0', -- 1-bit input: Dynamic CLKDIV inversion
+      DYNCLKSEL => '0',       -- 1-bit input: Dynamic CLK/CLKB inversion
       -- Input Data: 1-bit (each) input: ISERDESE2 data input ports
       D => '0',                       -- 1-bit input: Data input
       DDLY => data_delayed,                 -- 1-bit input: Serial data from IDELAYE2
-    --  OFB => OFB,                   -- 1-bit input: Data feedback from OSERDESE2
-     -- OCLKB => OCLKB,               -- 1-bit input: High speed negative edge output clock
+      OFB => '0',                   -- 1-bit input: Data feedback from OSERDESE2
+      OCLKB => '0',               -- 1-bit input: High speed negative edge output clock
       RST => rst,                   -- 1-bit input: Active high asynchronous reset
       -- SHIFTIN1, SHIFTIN2: 1-bit (each) input: Data width expansion input ports
-     -- SHIFTIN1 => SHIFTIN1,
-     -- SHIFTIN2 => SHIFTIN2
+      SHIFTIN1 => '0',
+      SHIFTIN2 => '0'
    );
 
    --Aufgabe 4
  
-   P_FSM_MAIN : process(sysclk_bufg) 
-   begin
+    P_SYNC: process(sysclk_bufg) 
+    begin 
+    end process;
+
+   
+   
+   P_FSM_MAIN : process(sysclk_bufg)
+   begin 
         if rising_edge(sysclk_bufg) then 
-            MAIN_STATE <= MAIN_NEXT_STATE;
+            idelay_ld <= '0';
+            idelay_ce <= '0';
+            case MAIN_STATE is 
+                when IDLE => if (resync = '1') then 
+                        o_done <= '0';
+                        o_err <= '0';
+                        idelay_ld <='1';
+                        tab_counter <= TO_UNSIGNED(0,5);
+                        idelay_cntin <= "00000";
+                        
+                        MAIN_STATE <= START_STABLE_CHECK;
+                    end if;
+                when START_STABLE_CHECK => if (sc_done = '1' ) then 
+                        
+                        MAIN_STATE <= WAIT_STABLE_CHECK;
+                    end if;
+                when WAIT_STABLE_CHECK => if sc_done = '1' then 
+                    
+                        MAIN_STATE <= STABLE_OR_NOT;
+                    end if; 
+                when STABLE_OR_NOT => if (sc_stable = '1') then 
+                        
+                        MAIN_STATE <= FIRST_STABLE;
+                    else
+                        MAIN_STATE <= FIRST_NOT_STABLE;
+                    end if;
+                when FIRST_STABLE => if(is_first_stable = '1') then 
+                        current_start_tab <= tab_counter;
+                        current_tab_length <= to_unsigned(0,5);
+                        current_end_tab <= tab_counter;
+                        is_first_stable <= '0';
+                        is_first_not_stable <= '1';
+                    else
+                        current_tab_length <= current_tab_length +1 ;
+                        current_end_tab <= tab_counter;
+                    end if;
+                    MAIN_STATE <= INCREMENT;
+                when FIRST_NOT_STABLE => if is_first_not_stable = '1' then 
+                        left_start_tab <= current_start_tab;
+                        left_tab_length <= current_tab_length;
+                        left_end_tab <= current_end_tab;
+                        current_start_tab <= to_unsigned(0,5);
+                        current_tab_length <= to_unsigned(0,5);
+                        current_end_tab <= to_unsigned(0,5);
+                        is_first_stable <= '1';
+                        is_first_not_stable <= '0';                     
+                    end if;
+                    MAIN_STATE <= INCREMENT;
+                when INCREMENT => 
+                    idelay_inc <= '1'; -- kann auch weggelassen werden? sollte ja immer 1 sein 
+                    idelay_ce <= '1'; -- wird nach einem Takt wieder zurueck gesetzt
+                    MAIN_STATE <= REACHED_32;
+                when REACHED_32 => if (tab_counter = 31) then 
+                        MAIN_STATE <= MID_FINDER;
+                    else
+                        MAIN_STATE <= START_STABLE_CHECK;
+                    end if;
+                    
+                when MID_FINDER => if left_tab_length = 0 then 
+                        mid_calc <=current_start_tab + current_end_tab;
+                        mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
+                    else
+                        if left_tab_length > current_tab_length then 
+                            mid_calc <= left_start_tab + left_end_tab;
+                            mid_calc <= mid_calc(mid_calc'left downto 1);
+                        else
+                            mid_calc <=current_start_tab + current_end_tab;
+                            mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
+                        end if;
+                        
+                    end if;
+            end case;
+        end if;
+   end process;   
+   P_FSM_STABLE_CHECK: process(sysclk_bufg) -- sysclk_bufg weil idelay auch danit getaktet ist
+   begin
+        if rising_edge(sysclk_bufg) then
+            case STABLE_STATE is
+                when IDLE => if (start_sc = '1') then
+                        STABLE_STATE <= COMPARE_STATE;
+                    end if;
+                when COMPARE_STATE => if ( prev_data = w_data) then 
+                            sc_counter <= sc_counter +1 ;
+                            prev_data <= w_data;
+                            if sc_counter = 5 then 
+                                sc_stable <='1';
+                                sc_counter <= to_unsigned(0,3);
+                                sc_done <= '1';
+                                STABLE_STATE <= IDLE;
+                                   
+                            end if;
+                        else
+                            sc_counter <= to_unsigned(0,3);
+                            sc_stable <='0';
+                            sc_done_temp <= '1'; -- meta stabilit't beachten
+                            STABLE_STATE <= IDLE;
+                                               
+                        end if;
+                        
         end if;
    end process;
    
-   P_FSM_MAIN_CASE : process(MAIN_STATE, resync)
-   begin 
-   end process;   
-   P_FSM_STABLE_CHECK: process
+   P_FSM_STABLE_CHECK_CASE : process(STABLE_STATE)
    begin
    end process;
    
-   P_FSM_WORD_ALLIGN : process
-   begin 
+   P_FSM_WORD_ALLIGN : process(OPENCLK)
+   begin
+        if rising_edge(OPENCLK) then 
+            WORD_STATE <= WORD_NEXT_STATE;
+        end if; 
    
+   end process;
+   P_FSM_WORD_ALLIGN_CASE: process(WORD_STATE)
+   begin
    end process;
 				
 

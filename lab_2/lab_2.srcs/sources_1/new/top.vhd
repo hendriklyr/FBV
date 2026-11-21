@@ -100,6 +100,7 @@ signal bitslip_sig : std_logic := '0';
 -- SIGNALE fuer FSM MAIN
 signal is_first_stable, is_first_not_stable : STD_LOGIC := '1';
 signal sc_stable , sc_done, sc_done_temp :std_logic := '0';
+signal align_done, align_err : std_logic := '0';
 signal tab_counter, current_tab_length,left_tab_length, current_start_tab, left_start_tab, current_end_tab, left_end_tab : unsigned( 4 downto 0);
 signal mid_calc : unsigned(tab_counter'length downto 0); -- 1 bit laenger fuer addition
 signal mid : unsigned (tab_counter'left downto 0);
@@ -109,16 +110,21 @@ signal start_sc : std_logic := '0';
 signal prev_data, w_data : std_logic_vector(7 downto 0);
 signal sc_counter : unsigned( 2 downto 0);
 
+-- SIGNALE fuer FSM WORD ALIGN
+signal start_align: std_logic := '0';
+signal test_data : std_logic_vector(7 downto 0) := x"C5";
+signal wait_cnt: unsigned(1 downto 0);
+signal bitslip_cnt: unsigned(2 downto 0);
 
-type MAIN_STATE_TYPE is (IDLE ,START_STABLE_CHECK, WAIT_STABLE_CHECK, FIRST_STABLE, FIRST_NOT_STABLE, REACHED_32, MID_FINDER, STABLE_OR_NOT, INCREMENT);
+type MAIN_STATE_TYPE is (IDLE ,START_STABLE_CHECK, WAIT_STABLE_CHECK, FIRST_STABLE, FIRST_NOT_STABLE, REACHED_32, MID_FINDER, STABLE_OR_NOT,GET_MID_TAP,START_WORD_ALIGN, WAIT_WORD_ALIGN, INCREMENT);
 
-signal MAIN_STATE, MAIN_NEXT_STATE : MAIN_STATE_TYPE;
+signal MAIN_STATE: MAIN_STATE_TYPE;
 
 type STABLE_STATE_TYPE is (IDLE, COMPARE_STATE );
-signal STABLE_STATE, STABLE_NEXT_STATE : STABLE_STATE_TYPE;
+signal STABLE_STATE : STABLE_STATE_TYPE;
 
-type WORD_STATE_TYPE is ( IDLE);
-signal WORD_STATE, WORD_NEXT_STATE : WORD_STATE_TYPE;
+type WORD_STATE_TYPE is ( IDLE, COMPARE_STATE, WAIT_STATE);
+signal WORD_STATE : WORD_STATE_TYPE;
 
 component clk_wiz_0 is
     port (
@@ -378,11 +384,30 @@ begin
                             mid_calc <=current_start_tab + current_end_tab;
                             mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
                         end if;
-                        
+                    MAIN_STATE <= GET_MID_TAP;    
                     end if;
+                when GET_MID_TAP =>
+                    idelay_cntin <= std_logic_vector(mid);
+                    idelay_ld <= '1';
+                    MAIN_STATE <= START_WORD_ALIGN;    
+
+                when START_WORD_ALIGN =>
+                    start_align <= '1';
+                    MAIN_STATE <= WAIT_WORD_ALIGN;
+                    
+                when WAIT_WORD_ALIGN =>
+                    if align_done = '1' then
+                        if align_err = '1' then
+                            o_err <= '1';
+                        else
+                            o_done <= '1'; 
+                        end if;
+                    end if;
+                    MAIN_STATE <= IDLE; 
             end case;
         end if;
    end process;   
+   
    P_FSM_STABLE_CHECK: process(sysclk_bufg) -- sysclk_bufg weil idelay auch danit getaktet ist
    begin
         if rising_edge(sysclk_bufg) then
@@ -406,30 +431,46 @@ begin
                             sc_done_temp <= '1'; -- meta stabilit't beachten
                             STABLE_STATE <= IDLE;
                                                
-                        end if;
-                        
+                        end if; 
+            end case;
         end if;
    end process;
    
-   P_FSM_STABLE_CHECK_CASE : process(STABLE_STATE)
-   begin
-   end process;
    
-   P_FSM_WORD_ALLIGN : process(OPENCLK)
+   P_FSM_WORD_ALLIGN : process(dclk_pixel)
    begin
-        if rising_edge(OPENCLK) then 
-            WORD_STATE <= WORD_NEXT_STATE;
+        if rising_edge(dclk_pixel) then 
+            bitslip_sig <= '0';
+            align_done <= '0';
+            case WORD_STATE is
+                when IDLE => if (start_align = '1') then
+                        WORD_STATE <= COMPARE_STATE;
+                    end if;
+                when COMPARE_STATE => 
+                    if (w_data = test_data) then
+                        align_done <= '1';
+                        WORD_STATE <= IDLE;
+                    else
+                        if (bitslip_cnt = 7) then
+                            align_err <= '1';
+                            align_done <= '1';  
+                            bitslip_cnt <= TO_UNSIGNED(0,3);                     
+                        else
+                            bitslip_cnt <= bitslip_cnt + 1;
+                            bitslip_sig <= '1';
+                        end if;
+                        WORD_STATE <= WAIT_STATE;
+                    end if;
+                when WAIT_STATE => 
+                    if wait_cnt = 2 then
+                        wait_cnt <= TO_UNSIGNED(0,2);
+                        WORD_STATE <= COMPARE_STATE;
+                    else              
+                        wait_cnt <= wait_cnt + 1; 
+                    end if;
+            end case;
         end if; 
    
    end process;
-   P_FSM_WORD_ALLIGN_CASE: process(WORD_STATE)
-   begin
-   end process;
-				
-
-   
-
-
-
 
 end Behavioral;

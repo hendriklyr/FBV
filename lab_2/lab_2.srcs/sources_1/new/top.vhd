@@ -99,24 +99,25 @@ signal bitslip_sig : std_logic := '0';
 
 -- SIGNALE fuer FSM MAIN
 signal is_first_stable, is_first_not_stable : STD_LOGIC := '1';
-signal sc_stable , sc_done, sc_done_temp :std_logic := '0';
-signal align_done, align_err : std_logic := '0';
-signal tab_counter, current_tab_length,left_tab_length, current_start_tab, left_start_tab, current_end_tab, left_end_tab : unsigned( 4 downto 0);
+signal sc_stable , sc_done, t_sc_stable , t_sc_done :std_logic := '0';
+signal align_done, align_err, t_align_done, t_align_err : std_logic := '0';
+signal tab_counter, current_tab_length,left_tab_length, current_start_tab, left_start_tab, current_end_tab, left_end_tab : unsigned( 4 downto 0) := "00000";
 signal mid_calc : unsigned(tab_counter'length downto 0); -- 1 bit laenger fuer addition
 signal mid : unsigned (tab_counter'left downto 0);
+
 -- SIGNALE fuer FSM STABLE CHECK
 
-signal start_sc : std_logic := '0';
+signal start_sc, t_start_sc : std_logic := '0';
 signal prev_data, w_data : std_logic_vector(7 downto 0);
 signal sc_counter : unsigned( 2 downto 0);
 
 -- SIGNALE fuer FSM WORD ALIGN
-signal start_align: std_logic := '0';
+signal start_align, t_start_align: std_logic := '0';
 signal test_data : std_logic_vector(7 downto 0) := x"C5";
 signal wait_cnt: unsigned(1 downto 0);
 signal bitslip_cnt: unsigned(2 downto 0);
 
-type MAIN_STATE_TYPE is (IDLE ,START_STABLE_CHECK, WAIT_STABLE_CHECK, FIRST_STABLE, FIRST_NOT_STABLE, REACHED_32, MID_FINDER, STABLE_OR_NOT,GET_MID_TAP,START_WORD_ALIGN, WAIT_WORD_ALIGN, INCREMENT);
+type MAIN_STATE_TYPE is (IDLE ,START_STABLE_CHECK, WAIT_STABLE_CHECK, FIRST_STABLE, FIRST_NOT_STABLE, REACHED_32, MID_FINDER, CALC_MID, STABLE_OR_NOT,GET_MID_TAP,START_WORD_ALIGN, WAIT_WORD_ALIGN, INCREMENT);
 
 signal MAIN_STATE: MAIN_STATE_TYPE;
 
@@ -276,14 +277,14 @@ begin
    port map (
       O => open,                       -- 1-bit output: Combinatorial output
       -- Q1 - Q8: 1-bit (each) output: Registered data outputs
-      Q1 => w_data(7),
-      Q2 => w_data(6),
-      Q3 => w_data(5),
-      Q4 => w_data(4),
-      Q5 => w_data(3),
-      Q6 => w_data(2),
-      Q7 => w_data(1),
-      Q8 => w_data(0),
+      Q1 => w_data(0),
+      Q2 => w_data(1),
+      Q3 => w_data(2),
+      Q4 => w_data(3),
+      Q5 => w_data(4),
+      Q6 => w_data(5),
+      Q7 => w_data(6),
+      Q8 => w_data(7),
       -- SHIFTOUT1, SHIFTOUT2: 1-bit (each) output: Data width expansion output ports
       SHIFTOUT1 => open,
       SHIFTOUT2 => open,
@@ -328,6 +329,8 @@ begin
         if rising_edge(sysclk_bufg) then 
             idelay_ld <= '0';
             idelay_ce <= '0';
+            start_sc <= '0';
+            start_align <= '0';
             if rst = '1' then
                 o_done <= '0';
                 o_err <= '0';
@@ -341,8 +344,11 @@ begin
                         o_err <= '0';
                         idelay_ld <='1';
                         tab_counter <= TO_UNSIGNED(0,5);
+                        current_tab_length <= to_unsigned(0,5);
+                        current_start_tab <= to_unsigned(0,5);
+                        current_end_tab <= to_unsigned(0,5);
                         idelay_cntin <= "00000";
-                        
+                        left_tab_length <= to_unsigned(0,5);  
                         MAIN_STATE <= START_STABLE_CHECK;
                     end if;
                     
@@ -352,12 +358,12 @@ begin
                    
                     
                 when WAIT_STABLE_CHECK => 
-                    if sc_done = '1' then 
+                    if t_sc_done = '1' then 
                         MAIN_STATE <= STABLE_OR_NOT;
                     end if;
                      
                 when STABLE_OR_NOT => 
-                    if (sc_stable = '1') then 
+                    if (t_sc_stable = '1') then 
                         MAIN_STATE <= FIRST_STABLE;
                     else
                         MAIN_STATE <= FIRST_NOT_STABLE;
@@ -378,18 +384,21 @@ begin
                     
                 when FIRST_NOT_STABLE => 
                     if is_first_not_stable = '1' then 
-                        left_start_tab <= current_start_tab;
-                        left_tab_length <= current_tab_length;
-                        left_end_tab <= current_end_tab;
-                        current_start_tab <= to_unsigned(0,5);
-                        current_tab_length <= to_unsigned(0,5);
-                        current_end_tab <= to_unsigned(0,5);
-                        is_first_stable <= '1';
-                        is_first_not_stable <= '0';                     
+                        if left_tab_length = "00000" then
+                            left_start_tab <= current_start_tab;
+                            left_tab_length <= current_tab_length;
+                            left_end_tab <= current_end_tab;
+                            current_start_tab <= to_unsigned(0,5);
+                            current_tab_length <= to_unsigned(0,5);
+                            current_end_tab <= to_unsigned(0,5);
+                            is_first_stable <= '1';
+                            is_first_not_stable <= '0';  
+                        end if;                   
                     end if;
                     MAIN_STATE <= INCREMENT;
                     
-                when INCREMENT => 
+                when INCREMENT =>
+                    tab_counter <= tab_counter + 1; 
                     idelay_inc <= '1'; -- kann auch weggelassen werden? sollte ja immer 1 sein 
                     idelay_ce <= '1'; -- wird nach einem Takt wieder zurueck gesetzt
                     MAIN_STATE <= REACHED_32;
@@ -403,18 +412,22 @@ begin
                     
                 when MID_FINDER => 
                     if left_tab_length = 0 then 
-                        mid_calc <=current_start_tab + current_end_tab;
-                        mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
+                        mid_calc <= ('0' & current_start_tab) + current_end_tab;
+                        --mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
                     else
                         if left_tab_length > current_tab_length then 
-                            mid_calc <= left_start_tab + left_end_tab;
-                            mid <= mid_calc(mid_calc'left downto 1);
+                            mid_calc <= ('0' & left_start_tab) + left_end_tab;
+                            --mid <= mid_calc(mid_calc'left downto 1);
                         else
-                            mid_calc <=current_start_tab + current_end_tab;
-                            mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
+                            mid_calc <= ('0' & current_start_tab) + current_end_tab;
+                            --mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
                         end if;
-                    MAIN_STATE <= GET_MID_TAP;    
+                    MAIN_STATE <= CALC_MID;    
                     end if;
+                    
+                when CALC_MID => 
+                    mid <= mid_calc(mid_calc'left downto 1);
+                    MAIN_STATE <= GET_MID_TAP;
                     
                 when GET_MID_TAP =>
                     idelay_cntin <= std_logic_vector(mid);
@@ -426,33 +439,36 @@ begin
                     MAIN_STATE <= WAIT_WORD_ALIGN;
                     
                 when WAIT_WORD_ALIGN =>
-                    if align_done = '1' then
-                        if align_err = '1' then
+                    if t_align_done = '1' then
+                        if t_align_err = '1' then
                             o_err <= '1';
                         else
                             o_done <= '1'; 
                         end if;
+                        
+                        MAIN_STATE <= IDLE; 
                     end if;
-                    MAIN_STATE <= IDLE; 
+                    
             end case;
         end if;
    end process;   
    
-   P_FSM_STABLE_CHECK: process(sysclk_bufg) -- sysclk_bufg weil idelay auch danit getaktet ist
+   P_FSM_STABLE_CHECK: process(dclk_pixel) -- sysclk_bufg weil idelay auch danit getaktet ist
    begin
-        if rising_edge(sysclk_bufg) then
+        if rising_edge(dclk_pixel) then
+            prev_data <= w_data;
             if rst = '1' then
-                align_done <= '0';
-                wait_cnt <= TO_UNSIGNED(0,2);
-                bitslip_cnt <= TO_UNSIGNED(0,3);
+                sc_done <= '0';
+                sc_counter <= TO_UNSIGNED(0,3);
                 STABLE_STATE <= IDLE;
             end if;
             case STABLE_STATE is
-                when IDLE => if (start_sc = '1') then
+                when IDLE => if (t_start_sc = '1') then
                         STABLE_STATE <= COMPARE_STATE;
                     end if;
+                    
                 when COMPARE_STATE => 
-                        prev_data <= w_data;
+                    
                         if ( prev_data = w_data) then 
                             sc_counter <= sc_counter +1 ;
                             
@@ -460,13 +476,14 @@ begin
                                 sc_stable <='1';
                                 sc_counter <= to_unsigned(0,3);
                                 sc_done <= '1';
+                                
                                 STABLE_STATE <= IDLE;
                                    
                             end if;
                         else
                             sc_counter <= to_unsigned(0,3);
                             sc_stable <='0';
-                            sc_done_temp <= '1'; -- meta stabilit't beachten
+                            sc_done <= '1'; -- meta stabilit't beachten
                             STABLE_STATE <= IDLE;
                                                
                         end if; 
@@ -479,15 +496,20 @@ begin
    begin
         if rising_edge(dclk_pixel) then 
             bitslip_sig <= '0';
-            align_done <= '0';
+            
             if rst = '1' then
                 align_done <= '0';
                 wait_cnt <= TO_UNSIGNED(0,2);
                 bitslip_cnt <= TO_UNSIGNED(0,3);
                 WORD_STATE <= IDLE;
             end if;
+            
             case WORD_STATE is
-                when IDLE => if (start_align = '1') then
+                when IDLE => if (t_start_align = '1') then
+                        align_done <= '0';
+                        align_err <= '0';
+                        wait_cnt <= TO_UNSIGNED(0,2);
+                        bitslip_cnt <= TO_UNSIGNED(0,3);
                         WORD_STATE <= COMPARE_STATE;
                     end if;
                 when COMPARE_STATE => 
@@ -498,12 +520,13 @@ begin
                         if (bitslip_cnt = 7) then
                             align_err <= '1';
                             align_done <= '1';  
-                            bitslip_cnt <= TO_UNSIGNED(0,3);                     
+                            WORD_STATE <= IDLE;                   
                         else
                             bitslip_cnt <= bitslip_cnt + 1;
                             bitslip_sig <= '1';
+                            WORD_STATE <= WAIT_STATE;
                         end if;
-                        WORD_STATE <= WAIT_STATE;
+                        
                     end if;
                 when WAIT_STATE => 
                     if wait_cnt = 2 then
@@ -515,6 +538,19 @@ begin
             end case;
         end if; 
    
+   end process;
+   
+   SYNC: process(sysclk_bufg)
+   begin 
+        if rising_edge(sysclk_bufg) then 
+        t_start_sc <= start_sc;
+        t_sc_done <= sc_done;
+        t_sc_stable <= sc_stable;
+        t_start_align <= start_align;
+        t_align_done <= align_done;
+        t_align_err <= align_err;
+        
+        end if;
    end process;
 
 end Behavioral;

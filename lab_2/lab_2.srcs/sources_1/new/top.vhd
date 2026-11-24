@@ -151,7 +151,7 @@ begin
     
     --Aufgabe 1ii
 
-   IBUFDS_inst : IBUFDS
+   IBUFDS_CLK : IBUFDS
    generic map (
       DIFF_TERM => FALSE, -- Differential Termination 
       IBUF_LOW_PWR => TRUE, -- Low power (TRUE) vs. performance (FALSE) setting for referenced I/O standards
@@ -160,6 +160,17 @@ begin
       O => dclk_int,  -- Buffer output
       I => dclk_p,  -- Diff_p buffer input (connect directly to top-level port)
       IB => dclk_n -- Diff_n buffer input (connect directly to top-level port)
+   );
+    
+    IBUFDS_DATA : IBUFDS
+   generic map (
+      DIFF_TERM => FALSE, -- Differential Termination 
+      IBUF_LOW_PWR => TRUE, -- Low power (TRUE) vs. performance (FALSE) setting for referenced I/O standards
+      IOSTANDARD => "DEFAULT")
+   port map (
+      O => data_int,  -- Buffer output
+      I => i_DATA_p,  -- Diff_p buffer input (connect directly to top-level port)
+      IB => i_DATA_n -- Diff_n buffer input (connect directly to top-level port)
    );
     
    BUFIO_inst : BUFIO
@@ -317,8 +328,15 @@ begin
         if rising_edge(sysclk_bufg) then 
             idelay_ld <= '0';
             idelay_ce <= '0';
+            if rst = '1' then
+                o_done <= '0';
+                o_err <= '0';
+                o_locked <= '1';
+                MAIN_STATE <= IDLE;
+            end if;
             case MAIN_STATE is 
-                when IDLE => if (resync = '1') then 
+                when IDLE => 
+                    if (resync = '1') then 
                         o_done <= '0';
                         o_err <= '0';
                         idelay_ld <='1';
@@ -327,21 +345,26 @@ begin
                         
                         MAIN_STATE <= START_STABLE_CHECK;
                     end if;
-                when START_STABLE_CHECK => if (sc_done = '1' ) then 
-                        
-                        MAIN_STATE <= WAIT_STABLE_CHECK;
-                    end if;
-                when WAIT_STABLE_CHECK => if sc_done = '1' then 
                     
+                when START_STABLE_CHECK => 
+                    start_sc <=  '1'; 
+                    MAIN_STATE <= WAIT_STABLE_CHECK;
+                   
+                    
+                when WAIT_STABLE_CHECK => 
+                    if sc_done = '1' then 
                         MAIN_STATE <= STABLE_OR_NOT;
-                    end if; 
-                when STABLE_OR_NOT => if (sc_stable = '1') then 
-                        
+                    end if;
+                     
+                when STABLE_OR_NOT => 
+                    if (sc_stable = '1') then 
                         MAIN_STATE <= FIRST_STABLE;
                     else
                         MAIN_STATE <= FIRST_NOT_STABLE;
                     end if;
-                when FIRST_STABLE => if(is_first_stable = '1') then 
+                    
+                when FIRST_STABLE =>
+                    if(is_first_stable = '1') then 
                         current_start_tab <= tab_counter;
                         current_tab_length <= to_unsigned(0,5);
                         current_end_tab <= tab_counter;
@@ -352,7 +375,9 @@ begin
                         current_end_tab <= tab_counter;
                     end if;
                     MAIN_STATE <= INCREMENT;
-                when FIRST_NOT_STABLE => if is_first_not_stable = '1' then 
+                    
+                when FIRST_NOT_STABLE => 
+                    if is_first_not_stable = '1' then 
                         left_start_tab <= current_start_tab;
                         left_tab_length <= current_tab_length;
                         left_end_tab <= current_end_tab;
@@ -363,29 +388,34 @@ begin
                         is_first_not_stable <= '0';                     
                     end if;
                     MAIN_STATE <= INCREMENT;
+                    
                 when INCREMENT => 
                     idelay_inc <= '1'; -- kann auch weggelassen werden? sollte ja immer 1 sein 
                     idelay_ce <= '1'; -- wird nach einem Takt wieder zurueck gesetzt
                     MAIN_STATE <= REACHED_32;
-                when REACHED_32 => if (tab_counter = 31) then 
+                    
+                when REACHED_32 => 
+                    if (tab_counter = 31) then 
                         MAIN_STATE <= MID_FINDER;
                     else
                         MAIN_STATE <= START_STABLE_CHECK;
                     end if;
                     
-                when MID_FINDER => if left_tab_length = 0 then 
+                when MID_FINDER => 
+                    if left_tab_length = 0 then 
                         mid_calc <=current_start_tab + current_end_tab;
                         mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
                     else
                         if left_tab_length > current_tab_length then 
                             mid_calc <= left_start_tab + left_end_tab;
-                            mid_calc <= mid_calc(mid_calc'left downto 1);
+                            mid <= mid_calc(mid_calc'left downto 1);
                         else
                             mid_calc <=current_start_tab + current_end_tab;
                             mid <= mid_calc(mid_calc'left downto 1); -- (start+ende)/2
                         end if;
                     MAIN_STATE <= GET_MID_TAP;    
                     end if;
+                    
                 when GET_MID_TAP =>
                     idelay_cntin <= std_logic_vector(mid);
                     idelay_ld <= '1';
@@ -411,13 +441,21 @@ begin
    P_FSM_STABLE_CHECK: process(sysclk_bufg) -- sysclk_bufg weil idelay auch danit getaktet ist
    begin
         if rising_edge(sysclk_bufg) then
+            if rst = '1' then
+                align_done <= '0';
+                wait_cnt <= TO_UNSIGNED(0,2);
+                bitslip_cnt <= TO_UNSIGNED(0,3);
+                STABLE_STATE <= IDLE;
+            end if;
             case STABLE_STATE is
                 when IDLE => if (start_sc = '1') then
                         STABLE_STATE <= COMPARE_STATE;
                     end if;
-                when COMPARE_STATE => if ( prev_data = w_data) then 
+                when COMPARE_STATE => 
+                        prev_data <= w_data;
+                        if ( prev_data = w_data) then 
                             sc_counter <= sc_counter +1 ;
-                            prev_data <= w_data;
+                            
                             if sc_counter = 5 then 
                                 sc_stable <='1';
                                 sc_counter <= to_unsigned(0,3);
@@ -442,6 +480,12 @@ begin
         if rising_edge(dclk_pixel) then 
             bitslip_sig <= '0';
             align_done <= '0';
+            if rst = '1' then
+                align_done <= '0';
+                wait_cnt <= TO_UNSIGNED(0,2);
+                bitslip_cnt <= TO_UNSIGNED(0,3);
+                WORD_STATE <= IDLE;
+            end if;
             case WORD_STATE is
                 when IDLE => if (start_align = '1') then
                         WORD_STATE <= COMPARE_STATE;
